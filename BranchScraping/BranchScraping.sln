@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36109.1 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BranchScraping", "BranchScraping\BranchScraping.csproj", "{5D8D5C3D-B5AE-437B-810E-21260C502749}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{5D8D5C3D-B5AE-437B-810E-21260C502749}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5D8D5C3D-B5AE-437B-810E-21260C502749}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5D8D5C3D-B5AE-437B-810E-21260C502749}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5D8D5C3D-B5AE-437B-810E-21260C502749}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {470B9648-81FD-42EC-8E2C-B4B4D04E1559}
+	EndGlobalSection
+EndGlobal
