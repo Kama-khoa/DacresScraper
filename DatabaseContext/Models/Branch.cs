@@ -21,7 +21,6 @@ namespace DatabaseContext.Models
         public string? BranchExternalWebsite { get; set; }
         [StringLength(50)]
         public string BranchPhone { get; set; }
-        public string BranchEmail { get; set; }
         public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now; 
     }
 }

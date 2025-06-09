@@ -3,15 +3,17 @@ using DatabaseContext.Models;
 using System;
 using Microsoft.EntityFrameworkCore;
 using DatabaseContext;
+using log4net;
 
 namespace BranchScraping
 {
     public class Program
     {
-        public static void Run(int numberOfThread, int retryTimes)
+        public static void Run(int numberOfThread, ILog logger, int retryTimes)
         {
-            Console.WriteLine($"Start Branch Scrape");
+            logger.Info($"Start Branch Scrape");
 
+            ScrapeBranch.Logger = logger;
             using (AppDbContext context = new AppDbContext())
             {
                 var newBranches = context.NewBranchUrls.ToList();
@@ -26,13 +28,11 @@ namespace BranchScraping
 
             }
 
-            //// wait synchronously
-
             Task.WaitAll(backgroundTasks);
 
             for (int time = 0; time < retryTimes; time++)
             {
-                //retry to scrape the failed listing one more time            
+                logger.Info("Retry the failed Listing one more time");
                 ScrapeBranch.Branches = ScrapeBranch.RetryBranches;
                 ScrapeBranch.RetryBranches = new List<NewBranchUrl>();
 
@@ -51,7 +51,7 @@ namespace BranchScraping
                 Task.WaitAll(backgroundTasks);
             }
 
-            Console.WriteLine("End Branch Scrape");
+            logger.Info("End Branch Scrape");
         }
     }
 }
