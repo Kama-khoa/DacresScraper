@@ -25,7 +25,7 @@ namespace RealEstateScraper
             {
                 try
                 {
-                    //context.Database.ExecuteSqlRaw("TRUNCATE TABLE Properties");
+                    context.Database.ExecuteSqlRaw("TRUNCATE TABLE Properties");
 
                     //context.Database.ExecuteSql("TRUNCATE TABLE Branch");
                 }
@@ -36,11 +36,11 @@ namespace RealEstateScraper
             }
 
             logger.Info("Starting the scraper with " + numThreads + " threads.");
-            //ScraperService.Start(numThreads, logger);
+            ScraperService.Start(numThreads, logger);
 
-            DetailsScraper.Program.Run(numThreads, logger, RetryTimes); 
+            DetailsScraper.Program.Run(numThreads, logger, RetryTimes);
 
-            BranchScraping.Program.Run(numThreads, logger, RetryTimes);
+            //BranchScraping.Program.Run(numThreads, logger, RetryTimes);
         }
     }
 }

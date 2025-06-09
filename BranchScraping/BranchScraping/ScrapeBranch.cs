@@ -1,14 +1,17 @@
-﻿using HtmlAgilityPack;
-using Microsoft.Extensions.Logging;
+﻿using Azure;
+using DatabaseContext;
 using DatabaseContext.Models;
+using HtmlAgilityPack;
+using log4net;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using DatabaseContext;
 
 namespace BranchScraping
 {
@@ -17,6 +20,7 @@ namespace BranchScraping
         public static List<NewBranchUrl> Branches { get; set; }
         public static List<NewBranchUrl> RetryBranches { get; set; }
         public static bool IsRetry = false;
+        public static ILog Logger { get; set; }
 
         public static void StartScrape()
         {
@@ -39,7 +43,6 @@ namespace BranchScraping
                         Branches.Remove(branch);
 
                     }
-                    Console.WriteLine("Start scrape branch: " + branch.BranchUrl);
 
                     try
                     {
@@ -70,59 +73,95 @@ namespace BranchScraping
                         {
                             RetryBranches.Add(branch);
                         }
-                        Console.WriteLine(string.Format("Scrape branch {0} error due to: {1}", branch.BranchName, e.Message));
+
+                        Logger.Error(("Scrape branch {0} error due to: {1}", branch.BranchName, e.Message));
                     }
 
                 }
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                Console.WriteLine(e);
+                Logger.Error("An error occurred during scraping: " + ex.Message);
             }
         }
 
         public static void PerformScrape(NewBranchUrl branch)
         {
-            using (var client = new WebClient())
+            Logger.Info($"Scraping details for {branch.BranchUrl}");
+            try
             {
-                client.Headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.92 Safari/537.36";
+                string page = string.Empty;
+                using (WebClient webClient = new WebClient())
+                {
+                    //webClient.Proxy = new WebProxy("http://brd.superproxy.io:22225")
+                    //{
+                    //    Credentials = new NetworkCredential(
+                    //        "lum-customer-c_9b0c3167-zone-data_center",
+                    //        "r80ykn3xmrfp"
+                    //    )
+                    //};
+                    webClient.Headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.92 Safari/537.36";
 
-                var page = client.DownloadString(branch.BranchUrl);
+                    page = webClient.DownloadString(branch.BranchUrl);
+                    if (page == null)
+                    {
+                        return;
+                    }
+                }
                 HtmlDocument htmlDocument = new HtmlDocument();
                 htmlDocument.LoadHtml(page);
 
-                var html = htmlDocument.DocumentNode.SelectSingleNode("//body[@class='branches show residential']");
-                if (html != null)
+                var html = htmlDocument.DocumentNode.Descendants("body").First();
+                if(html != null)
                 {
                     var branchName = html.Descendants("h1")
-                                             .FirstOrDefault(h1 => h1.GetAttributeValue("class", "").Contains("branch-details__main-heading"))
-                                             ?.InnerText.Trim();
-                    var branchAddress = html.Descendants("div")
-                                                .FirstOrDefault(p => p.GetAttributeValue("class", "").Contains("address"))
-                                                ?.InnerText.Trim();
+                                         .FirstOrDefault(h1 => h1.GetAttributeValue("class", "").Contains("branch-details__main-heading"))
+                                         ?.InnerText.Trim();
+                    //var divAddress = html.Descendants("div")
+                    //                            .FirstOrDefault(div => div.GetAttributeValue("class", "").Contains("block-content clearfix"));
+                    //var branchAddress = divAddress.Descendants("div")
+                    //                            .FirstOrDefault(div => div.GetAttributeValue("class", "").Contains("address"))
+                    //                            ?.InnerText.Trim();
+                    var addressNode = html.SelectSingleNode("//div[@class='address']");
+                    string address = addressNode?.InnerText.Trim();
+                    string normalizedAddress = Regex.Replace(address, @"\s+", " ");
                     var regex = new Regex(@"[A-Z]{1,2}[0-9R][0-9A-Z]?\s?[0-9][A-Z]{2}", RegexOptions.IgnoreCase);
-                    var match = regex.Match(branchAddress);
+                    var match = regex.Match(normalizedAddress);
                     var branchPostcode = match.Success ? match.Value.ToUpper() : null;
                     var branchPhone = html.Descendants("a")
                                                 .FirstOrDefault(a => a.GetAttributeValue("class", "").Contains("phone"))
                                                 ?.InnerText.Trim();
-                    var branchEmail = html.SelectSingleNode("//div[@class='email']/a")
-                                          ?.InnerText.Trim();
+                    var newBranch = new Branch
+                    {
+                        BranchUrl = branch.BranchUrl,
+                        BranchName = branchName,
+                        BranchAddress = normalizedAddress,
+                        BranchPostcode = branchPostcode,
+                        BranchPhone = branchPhone,
+                    };
+
                     using (AppDbContext context = new AppDbContext())
                     {
-                        var newBranch = new Branch
-                        {
-                            BranchUrl = branch.BranchUrl,
-                            BranchName = branchName,
-                            BranchAddress = branchAddress,
-                            BranchPostcode = branchPostcode,
-                            BranchPhone = branchPhone,
-                            BranchEmail = branchEmail
-                        };
-                       
                         context.Branches.Add(newBranch);
                         context.SaveChanges();
                     }
+                }
+            }
+            catch (Exception ex)
+            {
+                using (AppDbContext context = new AppDbContext())
+                {
+                    FailedItem failedItem = new FailedItem()
+                    {
+                        CreatedDate = DateTime.UtcNow,
+                        IsItemDeleted = false,
+                        ItemType = 1,
+                        Url = branch.BranchUrl,
+                        ErrorMessage = ex.Message
+                    };
+                    context.FailedItems.Add(failedItem);
+                    context.SaveChanges();
+                    Logger.Error($"Error scraping branch {branch.BranchName}: {ex.Message}");
                 }
             }
         }
