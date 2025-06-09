@@ -1,28 +1,110 @@
-﻿using HtmlAgilityPack;
+﻿using Azure;
+using DatabaseContext;
+using DatabaseContext.Models;
+using HtmlAgilityPack;
+using log4net;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
-using DatabaseContext.Models;
 using System.Net;
 using System.Text.RegularExpressions;
-using DatabaseContext;
 
 namespace DetailsScraper
 {
     public class ScraperDetail
     {
-        static AppDbContext context = new AppDbContext();
-        static WebClient webClient = new WebClient();
-        public static List<BasicListingUrl> RetryPages { get; set; }
+        public static ILog Logger { get; set; }
+        public static List<BasicListingUrl> Listings { get; set; }
+        public static List<BasicListingUrl> RetryListings { get; set; }
         public static bool IsRetry = false;
         static string urlRaw = "https://www.dacres.co.uk";
-
-        public static void DetailsCrawler(Property property)
+        public static void StartScrape()
         {
             try
             {
-                string html = webClient.DownloadString(property.ListingUrl);
+                while (true)
+                {
+                    BasicListingUrl listing;
+                    lock (Listings)
+                    {
+                        listing = Listings.FirstOrDefault();
+
+                        //if there's no listing requires update - exit
+                        if (listing == null)
+                        {
+                            break;
+                        }
+                        //otherwise, start scrape for this listing
+                        //Mark the listing is dirty so that the other threads will not pick it up
+                        Listings.Remove(listing);
+                    }
+                    try
+                    {
+                        //scrape the data 
+                        PerformScrape(listing);
+                    }
+                    catch (Exception e)
+                    {
+                        // If it's the last retry scrape, log the failed listing to db
+                        if (IsRetry)
+                        {
+                            using (AppDbContext context = new AppDbContext())
+                            {
+                                FailedItem failedItem = new FailedItem()
+                                {
+                                    CreatedDate = DateTime.UtcNow,
+                                    IsItemDeleted = false,
+                                    ItemType = 1,
+                                    Url = listing.ListingUrl,
+                                    Reference = listing.ListingSiteRef,
+                                    ErrorMessage = e.Message
+                                };
+                                context.FailedItems.Add(failedItem);
+                                context.SaveChanges();
+                            }
+                        }
+                        //otherwise add the listing to retry list to scrape again
+                        else
+                        {
+                            RetryListings.Add(listing);
+                        }
+
+                        Logger.Error(("Scrape listing {0} error due to: {1}", listing.ListingSiteRef, e.Message));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("An error occurred during scraping: " + ex.Message);
+            }
+        }
+
+        public static void PerformScrape(BasicListingUrl listing)
+        {
+            Logger.Info($"Scraping details for {listing.ListingUrl}");
+            try
+            {
+                string html = string.Empty;
+                using (WebClient webClient = new WebClient())
+                {
+                    webClient.Proxy = new WebProxy("http://brd.superproxy.io:22225")
+                    {
+                        Credentials = new NetworkCredential(
+                            "lum-customer-c_9b0c3167-zone-data_center",
+                            "r80ykn3xmrfp"
+                        )
+                    };
+                    webClient.Headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.92 Safari/537.36";
+
+                    html = webClient.DownloadString(listing.ListingUrl);
+                    if (html == null)
+                    {
+                        return;
+                    }
+                }
+                
                 HtmlDocument doc = new HtmlDocument();
                 doc.LoadHtml(html);
+
                 var scriptNodes = doc.DocumentNode.SelectNodes("//script")
                                                   .FirstOrDefault(s => s.InnerText.Contains("google.maps.LatLng"));
 
@@ -42,6 +124,13 @@ namespace DetailsScraper
                 var detailsDiv = doc.DocumentNode.SelectSingleNode("//main");
                 if (detailsDiv != null)
                 {
+                    var address = listing.Address.Trim();
+                    var postcode = "";
+                    var postcodeNode = Regex.Matches(address, @"[A-Z]{1,2}[0-9]{1,2}");
+                    if (postcodeNode.Count > 0)
+                    {
+                        postcode = postcodeNode[0].Value;
+                    }
                     var BranchNode = detailsDiv.Descendants("div")
                                             .FirstOrDefault(div => div.GetAttributeValue("class", "").Contains("branch-details-header"));
                     string branchName = BranchNode.Descendants("span")
@@ -141,23 +230,19 @@ namespace DetailsScraper
                     }
 
                     var virtualTour = "";
-                    if (property.VirtualTour == true)
+                    var virtualTourTab = detailsDiv.Descendants("div")
+                                            .FirstOrDefault(div => div.GetAttributeValue("id", "").Contains("tab-virtual-tour"));
+                    if (virtualTourTab != null && !virtualTourTab.InnerHtml.Equals("null"))
                     {
-                        var virtualTourTab = detailsDiv.Descendants("div")
-                                                .FirstOrDefault(div => div.GetAttributeValue("id", "").Contains("tab-virtual-tour"));
-                        if (virtualTourTab != null && !virtualTourTab.InnerHtml.Equals("null"))
-                        {
-                            virtualTour = virtualTourTab.Descendants("iframe")
-                                                        .FirstOrDefault(iframe => iframe.GetAttributeValue("src", "").Contains("youtube.com"))
-                                                        ?.GetAttributeValue("src", "");
-                        }
+                        virtualTour = virtualTourTab.Descendants("iframe")
+                                                    .FirstOrDefault(iframe => iframe.GetAttributeValue("src", "").Contains("youtube.com"))
+                                                    ?.GetAttributeValue("src", "");
                     }
 
                     PropertyDetails propertyDetails = new PropertyDetails
                     {
-                        Postcode = property.PostcodeDistrict,
-                        BannerText = property.BannerText,
-                        ListingSiteRef = property.ListingUrl,
+                        Postcode = postcode,
+                        ListingSiteRef = listing.ListingUrl,
                         Bedrooms = bedroomsInt,
                         Bathrooms = bathroomsInt,
                         Receptions = receptionsInt,
@@ -177,13 +262,31 @@ namespace DetailsScraper
                         VirtualTour = virtualTour,
                         CreatedAt = DateTime.Now
                     };
-                    context.PropertyDetails.Add(propertyDetails);
+                    using (AppDbContext context = new AppDbContext())
+                    {
+                        context.PropertyDetails.Add(propertyDetails);
+                        context.SaveChanges();
+                    }
+                        
                 }
-                context.SaveChanges();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error scraping details for {property.ListingUrl}: {ex.Message}");
+                using (AppDbContext context = new AppDbContext())
+                {
+                    FailedItem failedItem = new FailedItem()
+                    {
+                        CreatedDate = DateTime.UtcNow,
+                        IsItemDeleted = false,
+                        ItemType = 1,
+                        Url = listing.ListingUrl,
+                        Reference = listing.ListingSiteRef,
+                        ErrorMessage = ex.Message
+                    };
+                    context.FailedItems.Add(failedItem);
+                    context.SaveChanges();
+                    Logger.Info($"Error scraping details for {listing.ListingUrl}: {ex.Message}");
+                }
             }
         }
     }

@@ -18,9 +18,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\BranchScraping\BranchScraping\BranchScraping.csproj" />
     <ProjectReference Include="..\DacresCrawler\DatabaseContext\DatabaseContext.csproj" />
     <ProjectReference Include="..\DacresCrawler\Utilities\Utilities.csproj" />
     <ProjectReference Include="..\DatabaseContext\DatabaseContext.csproj" />
+    <ProjectReference Include="..\DetailsScraper\DetailsScraper.csproj" />
     <ProjectReference Include="..\Utilities\Utilities.csproj" />
   </ItemGroup>
 

@@ -25,7 +25,7 @@ namespace DatabaseContext.Models
         public double? Latitude { get; set; } 
 
         public string Tenure { get; set; }           
-        public string KeyFeatures { get; set; }
+        public string? KeyFeatures { get; set; }
         public string Images { get; set; }
         public string? EPC { get; set; }
         public string? FloorPlan { get; set; }

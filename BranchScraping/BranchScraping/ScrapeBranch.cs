@@ -39,7 +39,7 @@ namespace BranchScraping
                         Branches.Remove(branch);
 
                     }
-                    Console.WriteLine("Start scrape branch: " + branch.BranchName);
+                    Console.WriteLine("Start scrape branch: " + branch.BranchUrl);
 
                     try
                     {

@@ -12,7 +12,6 @@ namespace RealEstateScraper
 {
     public class ScraperService
     {
-        public static AppDbContext context = new AppDbContext();
         public static ILog Logger { get; set; } 
         public static List<BasicListingUrl> RetryPages { get; set; }
         public static bool IsRetry = false;
@@ -212,10 +211,11 @@ namespace RealEstateScraper
                     var fullUrl = $"{urlRaw}{listingUrl}";
                     var address = div.Descendants("h3").FirstOrDefault()?.InnerText.Trim();
 
-                    string postcodeDistrict = "";
-                    if (!string.IsNullOrEmpty(address) && address.Contains(","))
+                    var postcode = "";
+                    var postcodeNode = Regex.Matches(address, @"[A-Z]{1,2}[0-9]{1,2}");
+                    if (postcodeNode.Count > 0)
                     {
-                        postcodeDistrict = address.Split(',').Last().Trim();
+                        postcode = postcodeNode[0].Value;
                     }
 
                     bool saleRental = listingTypes == ListingTypes.Rent;
@@ -388,7 +388,7 @@ namespace RealEstateScraper
                         ListingSiteRef = id,
                         ListingUrl = fullUrl,
                         Address = address,
-                        PostcodeDistrict = postcodeDistrict,
+                        PostcodeDistrict = postcode,
                         Price = price,
                         Currency = currencyCode,
                         SaleRental = saleRental,
@@ -408,8 +408,11 @@ namespace RealEstateScraper
                         VirtualTour = virtualTour,
                         CreatedAt = DateTimeOffset.UtcNow
                     };
-                    context.Properties.Add(property);
-                    context.SaveChanges();
+                    using (var context = new AppDbContext())
+                    {
+                        context.Properties.Add(property);
+                        context.SaveChanges();
+                    }
                     i++;
                 }
                 Logger.Info($"Scraped {i} properties from {url}");

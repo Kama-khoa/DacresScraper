@@ -9,9 +9,9 @@ namespace DatabaseContext
         public DbSet<PropertyDetails> PropertyDetails { get; set; }
         public DbSet<FailedItem> FailedItems { get; set; }
         public DbSet<Branch> Branches { get; set; }
-        public IQueryable<BasicListingUrl> NewListingUrls { get; set; }
-        public IQueryable<UpdateListingUrl> UpdateListingUrls { get; set; }
-        public IQueryable<NewBranchUrl> NewBranchUrls { get; set; }
+        public DbSet<BasicListingUrl> NewListingUrls { get; set; }
+        public DbSet<UpdateListingUrl> UpdateListingUrls { get; set; }
+        public DbSet<NewBranchUrl> NewBranchUrls { get; set; }
 
         public AppDbContext()
         {
@@ -27,8 +27,9 @@ namespace DatabaseContext
         
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            modelBuilder.Entity<BasicListingUrl>().HasNoKey().ToView("vm_ListingUrl");
-            modelBuilder.Entity<NewBranchUrl>().HasNoKey().ToView("vm_BranchUrl");
+            modelBuilder.Entity<BasicListingUrl>().HasNoKey().ToView("vw_ListingUrl");
+            modelBuilder.Entity<NewBranchUrl>().HasNoKey().ToView("vw_BranchUrl");
+            modelBuilder.Entity<UpdateListingUrl>().HasNoKey();
         }   
     }
     public class BasicListingUrl
