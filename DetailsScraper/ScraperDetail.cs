@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using System.Net;
 using System.Text.RegularExpressions;
+using Utilities;
 
 namespace DetailsScraper
 {
@@ -86,12 +87,11 @@ namespace DetailsScraper
                 string html = string.Empty;
                 using (WebClient webClient = new WebClient())
                 {
-                    webClient.Proxy = new WebProxy("http://brd.superproxy.io:22225")
+                    AppConfig appConfig = new AppConfig();
+
+                    webClient.Proxy = new WebProxy(appConfig.ProxyUrl)
                     {
-                        Credentials = new NetworkCredential(
-                            "lum-customer-c_9b0c3167-zone-data_center",
-                            "r80ykn3xmrfp"
-                        )
+                        Credentials = new NetworkCredential(appConfig.ProxyUsername, appConfig.ProxyPassword)
                     };
                     webClient.Headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.92 Safari/537.36";
 

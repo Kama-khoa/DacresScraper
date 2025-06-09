@@ -1,17 +1,10 @@
-﻿using Azure;
-using DatabaseContext;
+﻿using DatabaseContext;
 using DatabaseContext.Models;
 using HtmlAgilityPack;
 using log4net;
-using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net;
-using System.Reflection;
-using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
+using Utilities;
 
 namespace BranchScraping
 {
@@ -93,13 +86,12 @@ namespace BranchScraping
                 string page = string.Empty;
                 using (WebClient webClient = new WebClient())
                 {
-                    //webClient.Proxy = new WebProxy("http://brd.superproxy.io:22225")
-                    //{
-                    //    Credentials = new NetworkCredential(
-                    //        "lum-customer-c_9b0c3167-zone-data_center",
-                    //        "r80ykn3xmrfp"
-                    //    )
-                    //};
+                    AppConfig appConfig = new AppConfig();
+
+                    webClient.Proxy = new WebProxy(appConfig.ProxyUrl)
+                    {
+                        Credentials = new NetworkCredential(appConfig.ProxyUsername, appConfig.ProxyPassword)
+                    };
                     webClient.Headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.92 Safari/537.36";
 
                     page = webClient.DownloadString(branch.BranchUrl);

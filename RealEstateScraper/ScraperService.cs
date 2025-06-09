@@ -1,7 +1,6 @@
 ﻿using DatabaseContext;
 using HtmlAgilityPack;
 using DatabaseContext.Models;
-using RealEstateScraper.Services;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.RegularExpressions;
@@ -185,12 +184,11 @@ namespace RealEstateScraper
         {
             try
             {
-                webClient.Proxy = new WebProxy("http://brd.superproxy.io:22225")
+                AppConfig appConfig = new AppConfig();
+
+                webClient.Proxy = new WebProxy(appConfig.ProxyUrl)
                 {
-                    Credentials = new NetworkCredential(
-                        "lum-customer-c_9b0c3167-zone-data_center",
-                        "r80ykn3xmrfp"
-                    )
+                    Credentials = new NetworkCredential(appConfig.ProxyUsername, appConfig.ProxyPassword)
                 };
 
                 var html = webClient.DownloadString(url);

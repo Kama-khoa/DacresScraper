@@ -1,10 +1,10 @@
 ﻿using DatabaseContext;
 using DatabaseContext.Models;
-using Microsoft.EntityFrameworkCore;
-using RealEstateScraper.Services;
-using System;
+using DotNetEnv;
 using log4net;
 using log4net.Config;
+using Microsoft.EntityFrameworkCore;
+using System;
 using System.Reflection;
 
 namespace RealEstateScraper
@@ -16,8 +16,14 @@ namespace RealEstateScraper
             var logRepository = LogManager.GetRepository(Assembly.GetEntryAssembly());
             XmlConfigurator.Configure(logRepository, new FileInfo("log4net.config"));
             var logger = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
-            
-            int numThreads = 1; // Number of threads to use for scraping
+
+            Env.Load();
+
+            string proxyUrl = Environment.GetEnvironmentVariable("PROXY_URL");
+            string proxyUser = Environment.GetEnvironmentVariable("PROXY_USERNAME");
+            string proxyPass = Environment.GetEnvironmentVariable("PROXY_PASSWORD");
+
+            int numThreads = 5; // Number of threads to use for scraping
 
             int RetryTimes = 1;
 
@@ -27,7 +33,7 @@ namespace RealEstateScraper
                 {
                     context.Database.ExecuteSqlRaw("TRUNCATE TABLE Properties");
 
-                    //context.Database.ExecuteSql("TRUNCATE TABLE Branch");
+                    context.Database.ExecuteSqlRaw("TRUNCATE TABLE Branch");
                 }
                 catch (Exception ex)
                 {
@@ -40,7 +46,7 @@ namespace RealEstateScraper
 
             DetailsScraper.Program.Run(numThreads, logger, RetryTimes);
 
-            //BranchScraping.Program.Run(numThreads, logger, RetryTimes);
+            BranchScraping.Program.Run(numThreads, logger, RetryTimes);
         }
     }
 }

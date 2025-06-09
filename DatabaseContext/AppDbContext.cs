@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using DatabaseContext.Models;
+using Utilities;
 
 namespace DatabaseContext
 {
@@ -23,7 +24,10 @@ namespace DatabaseContext
         }
 
         protected override void OnConfiguring(DbContextOptionsBuilder options)
-            => options.UseSqlServer("Server=Khoa-Laptop;Database=RealEstateScraperDb;TrustServerCertificate=True;Trusted_Connection=True;MultipleActiveResultSets=true");
+        {
+            AppConfig appConfig = new AppConfig();
+            options.UseSqlServer(appConfig.DbConnectionString);
+        }
         
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

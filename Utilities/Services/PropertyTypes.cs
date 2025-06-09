@@ -1,4 +1,4 @@
-namespace RealEstateScraper.Services
+namespace Utilities
 {
     public enum PropertyTypes
     {

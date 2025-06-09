@@ -19,8 +19,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\DacresCrawler\DatabaseContext\DatabaseContext.csproj" />
-    <ProjectReference Include="..\..\DacresCrawler\Utilities\Utilities.csproj" />
     <ProjectReference Include="..\..\DatabaseContext\DatabaseContext.csproj" />
     <ProjectReference Include="..\..\Utilities\Utilities.csproj" />
   </ItemGroup>
