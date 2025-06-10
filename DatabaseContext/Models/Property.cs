@@ -15,7 +15,7 @@
         public int? Pa { get; set; }
         public string PriceQualify { get; set; }
         public bool SaleRental { get; set; }
-        public string MarketStatus { get; set; }
+        public string? MarketStatus { get; set; }
         public string? BannerText { get; set; }
 
         public string PropertyType { get; set; }

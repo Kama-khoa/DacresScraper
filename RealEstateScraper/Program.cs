@@ -17,13 +17,7 @@ namespace RealEstateScraper
             XmlConfigurator.Configure(logRepository, new FileInfo("log4net.config"));
             var logger = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
-            Env.Load();
-
-            string proxyUrl = Environment.GetEnvironmentVariable("PROXY_URL");
-            string proxyUser = Environment.GetEnvironmentVariable("PROXY_USERNAME");
-            string proxyPass = Environment.GetEnvironmentVariable("PROXY_PASSWORD");
-
-            int numThreads = 5; // Number of threads to use for scraping
+            int numThreads = 1; // Number of threads to use for scraping
 
             int RetryTimes = 1;
 

@@ -1,11 +1,14 @@
 ﻿using DatabaseContext;
-using HtmlAgilityPack;
 using DatabaseContext.Models;
+using HtmlAgilityPack;
+using log4net;
+using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.RegularExpressions;
 using Utilities;
-using log4net;
 
 namespace RealEstateScraper
 {
@@ -15,6 +18,7 @@ namespace RealEstateScraper
         public static List<BasicListingUrl> RetryPages { get; set; }
         public static bool IsRetry = false;
         private static string urlRaw = "https://www.dacres.co.uk";
+        private static string apiBaseUrl = "https://www.dacres.co.uk/search.ljson";
 
         public static void Start(int numberOfThread, ILog logger)
         {
@@ -87,91 +91,94 @@ namespace RealEstateScraper
             Task.WaitAll(backgroundTasks);
         }
 
-        public static string BuildListUrl(ListingTypes listingTypes, PropertyTypes propertyTypes, int? page)
+        #region build api url
+        public static string BuildApiUrl(ListingTypes listingTypes, PropertyTypes propertyTypes, int? page)
         {
-            string listingType = "";
-            string propertyType = "";
+            string channel = listingTypes == ListingTypes.Sale ? "sales" : "lettings";
+            string fragment = "";
 
-            switch (listingTypes)
+            // Build fragment based on property type and page
+            string propertyFragment = propertyTypes switch
             {
-                case ListingTypes.Sale:
-                    listingType = "sales";
-                    break;
-                case ListingTypes.Rent:
-                    listingType = "lettings";
-                    break;
-                default:
-                    throw new Exception("The Listing type is invalid");
+                PropertyTypes.Commercial => "tag-commercial",
+                PropertyTypes.Residential => "tag-residential",
+                PropertyTypes.NewHomes => "tag-new-home",
+                PropertyTypes.Agriculture => "tag-agricultural-properties",
+                _ => throw new Exception("The Property type is invalid")
+            };
+
+            if (page.HasValue && page > 1)
+            {
+                fragment = $"{propertyFragment}/page-{page}";
+            }
+            else
+            {
+                fragment = propertyFragment;
             }
 
-            switch (propertyTypes)
-            {
-                case PropertyTypes.Commercial:
-                    propertyType = "tag-commercial";
-                    break;
-                case PropertyTypes.Residential:
-                    propertyType = "tag-residential";
-                    break;
-                case PropertyTypes.NewHomes:
-                    propertyType = "tag-new-home";
-                    break;
-                case PropertyTypes.Agriculture:
-                    propertyType = "tag-agricultural-properties";
-                    break;
-                default:
-                    throw new Exception("The Property type is invalid");
-            }
-
-            //return $"{urlRaw}/properties/{listingType}/{propertyType}/page-{page}";
-
-            if (page > 0)
-            {
-                return $"{urlRaw}/properties/{listingType}/{propertyType}/page-{page}";
-            }
-            return $"{urlRaw}/properties/{listingType}/{propertyType}";
+            return $"{apiBaseUrl}?channel={channel}&fragment={fragment}";
         }
+        #endregion
 
+        #region get total pages
         public static int GetTotalPages(ListingTypes listingTypes, PropertyTypes propertyTypes)
         {
-            using (var webClient = new WebClient())
+            try
             {
-                webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-
-                string firstPageUrl = BuildListUrl(listingTypes, propertyTypes, null);
-                string html = webClient.DownloadString(firstPageUrl);
-
-                HtmlDocument doc = new HtmlDocument();
-                doc.LoadHtml(html);
-
-                int resultsPerPage = 14;
-                int totalPages = 1;
-
-                var countSpan = doc.DocumentNode.SelectSingleNode("//span[@class='count']");
-                if (countSpan != null && int.TryParse(countSpan.InnerText.Trim(), out int totalResults))
+                using (var webClient = new WebClient())
                 {
-                    totalPages = (int)Math.Ceiling(totalResults / (double)resultsPerPage);
-                }
+                    webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+                    webClient.Headers.Add("Accept", "application/json");
 
-                Logger.Info($"Total Results: {totalPages * resultsPerPage} ({totalPages} pages)");
-                return totalPages;
+                    string apiUrl = BuildApiUrl(listingTypes, propertyTypes, 1);
+                    string jsonResponse = webClient.DownloadString(apiUrl);
+
+                    var jsonObject = JObject.Parse(jsonResponse);
+
+                    var pageObj = jsonObject["pagination"];
+                    var totalResults = pageObj["total_count"]?.Value<int>() ?? 0;
+                    var resultsPerPage = (pageObj["to_record"]?.Value<int>() - pageObj["from_record"]?.Value<int>()) + 1 ?? 14;
+
+                    if (totalResults == 0)
+                    {
+                        var properties = jsonObject["properties"];
+                        if (properties != null && properties.Type == JTokenType.Array)
+                        {
+                            resultsPerPage = properties.Count();
+                            totalResults = resultsPerPage * 10; 
+                        }
+                    }
+
+                    int totalPages = totalResults > 0 ? (int)Math.Ceiling(totalResults / (double)resultsPerPage) : 1;
+
+                    Logger.Info($"Total Results: {totalResults} ({totalPages} pages)");
+                    return totalPages;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error getting total pages: {ex.Message}");
+                return 1; 
             }
         }
+        #endregion
 
         public static void Startcrawler(ListingTypes listingTypes, PropertyTypes propertyTypes, ConcurrentQueue<int> pageQueue)
         {
-            using(var webClient = new WebClient())
+            using (var webClient = new WebClient())
             {
                 webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 OPR/119.0.0.0");
+                webClient.Headers.Add("Accept", "application/json");
 
                 while (pageQueue.TryDequeue(out int page))
                 {
                     try
                     {
-                        var url = BuildListUrl(listingTypes, propertyTypes, page);
+                        var url = BuildApiUrl(listingTypes, propertyTypes, page);
                         Logger.Info("Scraping page number: " + page);
-                        PerformScrape(listingTypes, propertyTypes, url, webClient);
+                        PerformApiScrape(listingTypes, propertyTypes, url, webClient);
                         Logger.Info($"Page {page} scraped successfully.");
-                    } 
+                    }
                     catch (Exception e)
                     {
                         Logger.Error($"Error scraping page {page}: {e.Message}");
@@ -180,7 +187,7 @@ namespace RealEstateScraper
             }
         }
 
-        public static void PerformScrape(ListingTypes listingTypes, PropertyTypes propertyTypes, string url, WebClient webClient)
+        public static void PerformApiScrape(ListingTypes listingTypes, PropertyTypes propertyTypes, string apiUrl, WebClient webClient)
         {
             try
             {
@@ -191,233 +198,43 @@ namespace RealEstateScraper
                     Credentials = new NetworkCredential(appConfig.ProxyUsername, appConfig.ProxyPassword)
                 };
 
-                var html = webClient.DownloadString(url);
+                var jsonResponse = webClient.DownloadString(apiUrl);
+                var jsonObject = JObject.Parse(jsonResponse);
 
-                HtmlDocument htmldocument = new HtmlDocument();
-
-                htmldocument.LoadHtml(html);
-
-                var divs = htmldocument.DocumentNode.SelectNodes("//div[@class='block-content']");
-
-                int i = 0;
-                foreach (var div in divs)
+                var properties = jsonObject["properties"];
+                if (properties == null || properties.Type != JTokenType.Array)
                 {
-                    if (!int.TryParse(div.GetAttributeValue("data-id", ""), out int id)) continue;
-                    var listingUrl = div.Descendants("a")
-                                        .FirstOrDefault(a => a.GetAttributeValue("class", "").Contains("property_link"))
-                                        ?.GetAttributeValue("data-base-url", "");
-                    var fullUrl = $"{urlRaw}{listingUrl}";
-                    var address = div.Descendants("h3").FirstOrDefault()?.InnerText.Trim();
-
-                    var postcode = "";
-                    var postcodeNode = Regex.Matches(address, @"[A-Z]{1,2}[0-9]{1,2}");
-                    if (postcodeNode.Count > 0)
-                    {
-                        postcode = postcodeNode[0].Value;
-                    }
-
-                    bool saleRental = listingTypes == ListingTypes.Rent;
-
-                    var priceSpan = div.Descendants("span")
-                                        .FirstOrDefault(span => span.GetAttributeValue("class", "").Contains("price"));
-                    string priceText = priceSpan?.InnerText.Trim() ?? "";
-                    priceText = Regex.Replace(priceText, @"\s+", " ");
-                    priceText = priceText.Replace(",", "").Trim();
-
-                    string priceQuantify = "";
-                    int? price = null, pcm = null, pw = null, pa = null;
-                    if (!string.IsNullOrEmpty(priceText))
-                    {
-                        var digitsOnly = new string(priceText.Where(char.IsDigit).ToArray());
-                        if (saleRental)
-                        {
-                            if (priceText.Contains("POA", StringComparison.OrdinalIgnoreCase) || priceText.Contains("Price on application", StringComparison.OrdinalIgnoreCase))
-                            {
-                                pcm = -1;
-                                priceQuantify = "POA";
-                            }
-                            if (priceText.Contains("pa", StringComparison.OrdinalIgnoreCase))
-                            {
-                                pa = int.TryParse(digitsOnly, out var parsedValue) ? parsedValue : null;
-                                priceQuantify = "Price Annum";
-                            }
-                            else if (priceText.Contains("pcm", StringComparison.OrdinalIgnoreCase))
-                            {
-                                pcm = int.TryParse(digitsOnly, out var parsedValue) ? parsedValue : null;
-                                priceQuantify = "Per Calendar Month";
-                            }
-                            else if (priceText.Contains("pw", StringComparison.OrdinalIgnoreCase))
-                            {
-                                pw = int.TryParse(digitsOnly, out var parsedValue) ? parsedValue : null;
-                                priceQuantify = "Per Week";
-                            }
-                        }
-                        else
-                        {
-                            price = int.TryParse(digitsOnly, out var parsedValue) ? parsedValue : null;
-
-                            if (priceText.Contains("Guide Price", StringComparison.OrdinalIgnoreCase))
-                            {
-                                priceQuantify = "Guide Price";
-                            }
-                            else if (priceText.Contains("Offers excess of", StringComparison.OrdinalIgnoreCase))
-                            {
-                                priceQuantify = "Offers Excess";
-                            }
-                            else if (priceText.Contains("Offers region of", StringComparison.OrdinalIgnoreCase))
-                            {
-                                priceQuantify = "Offers Region";
-                            }
-                            else if (priceText.Contains("Offers over", StringComparison.OrdinalIgnoreCase))
-                            {
-                                priceQuantify = "Offers Over";
-                            }
-                        }
-                    }
-
-                    string currencySymbol = new string(priceText.Where(c => !char.IsLetterOrDigit(c) && !char.IsWhiteSpace(c)).ToArray());
-                    string currencyCode = CurrencyHelper.CurrencySymbolToIsoCode(currencySymbol);
-
-                    bool commercialListing = propertyTypes == PropertyTypes.Commercial;
-
-                    bool newBuild = propertyTypes == PropertyTypes.NewHomes;
-
-                    var marketStatusImg = div.Descendants("img")
-                                             .FirstOrDefault(img => img.GetAttributeValue("class", "").Equals("property-status", StringComparison.OrdinalIgnoreCase));
-
-                    string marketStatus = "Available"; // Default value
-
-                    if (marketStatusImg != null)
-                    {
-                        var src = marketStatusImg.GetAttributeValue("src", "").ToLower();
-
-                        if (src.Contains("let_agreed_new"))
-                        {
-                            marketStatus = "Let Agreed";
-                        }
-                        else if (src.Contains("sstc_new"))
-                        {
-                            marketStatus = "Sold STC";
-                        }
-                    }
-
-                    bool virtualTour = false;
-                    var virtualTourImg = div.Descendants("img")
-                                            .FirstOrDefault(img => img.GetAttributeValue("alt", "").Equals("Virtual tour", StringComparison.OrdinalIgnoreCase));
-                    if (virtualTourImg != null) { virtualTour = true; }
-
-                    var bannerImg = div.Descendants("img")
-                                        .FirstOrDefault(img => img.GetAttributeValue("class", "").Equals("property-status", StringComparison.OrdinalIgnoreCase));
-
-                    string bannerText = "";
-
-                    if (bannerImg != null)
-                    {
-                        var src = bannerImg.GetAttributeValue("src", "").ToLower();
-
-                        if (src.Contains("let_agreed_new"))
-                        {
-                            bannerText = "Let Agreed";
-                        }
-                        else if (src.Contains("sstc_new"))
-                        {
-                            bannerText = "Sold STC";
-                        }
-                        else if (src.Contains("new-overlay"))
-                        {
-                            bannerText = "New";
-                        }
-                        if (virtualTour)
-                        {
-                            if (!string.IsNullOrEmpty(bannerText))
-                            {
-                                bannerText += " || Online Viewing";
-                            }
-                            else
-                            {
-                                bannerText = "Online Viewing";
-                            }
-                        }
-                    }
-
-                    var propertyTypeSpan = div.Descendants("span")
-                                            .FirstOrDefault(span => span.GetAttributeValue("class", "").Contains("list-rooms"));
-
-                    string fullText = propertyTypeSpan?.InnerText.Trim() ?? "";
-                    string HouseType = "";
-
-                    if (!string.IsNullOrEmpty(fullText))
-                    {
-                        int indexOfWith = fullText.IndexOf("with", StringComparison.OrdinalIgnoreCase);
-                        if (indexOfWith > 0)
-                        {
-                            HouseType = fullText.Substring(0, indexOfWith).Trim();
-                        }
-                        else
-                        {
-                            HouseType = fullText.Trim();
-                        }
-                    }
-
-                    var imageDiv = div.Descendants("img")
-                                        .FirstOrDefault(img => img.GetAttributeValue("class", "").Equals("zoomable thumb", StringComparison.OrdinalIgnoreCase))
-                                        ?.GetAttributeValue("src", "");
-                    var image = "https:" + imageDiv;
-
-                    var description = div.Descendants("p")
-                                         .FirstOrDefault(p => p.GetAttributeValue("class", "").Contains("description"))
-                                         ?.InnerText.Trim();
-                    var bedrooms = div.Descendants("li")
-                                        .FirstOrDefault(li => li.GetAttributeValue("class", "").Contains("beds"))
-                                        ?.InnerText.Trim();
-                    var bathrooms = div.Descendants("li")
-                                        .FirstOrDefault(li => li.GetAttributeValue("class", "").Contains("baths"))
-                                        ?.InnerText.Trim();
-                    var receptions = div.Descendants("li")
-                                        .FirstOrDefault(li => li.GetAttributeValue("class", "").Contains("reception"))
-                                        ?.InnerText.Trim();
-
-                    int? bedroomsInt = int.TryParse(bedrooms, out var b) ? b : 0;
-                    int? bathroomsInt = int.TryParse(bathrooms, out var bath) ? bath : 0;
-                    int? receptionsInt = int.TryParse(receptions, out var r) ? r : 0;
-
-                    var property = new Property
-                    {
-                        ListingSiteRef = id,
-                        ListingUrl = fullUrl,
-                        Address = address,
-                        PostcodeDistrict = postcode,
-                        Price = price,
-                        Currency = currencyCode,
-                        SaleRental = saleRental,
-                        MarketStatus = marketStatus,
-                        BannerText = bannerText,
-                        PropertyType = HouseType,
-                        PriceQualify = priceQuantify,
-                        CommercialListing = commercialListing,
-                        NewBuild = newBuild,
-                        Bedrooms = bedroomsInt,
-                        Bathrooms = bathroomsInt,
-                        Reception = receptionsInt,
-                        Image = image,
-                        Pcm = pcm,
-                        Pw = pw,
-                        Pa = pa,
-                        VirtualTour = virtualTour,
-                        CreatedAt = DateTimeOffset.UtcNow
-                    };
-                    using (var context = new AppDbContext())
-                    {
-                        context.Properties.Add(property);
-                        context.SaveChanges();
-                    }
-                    i++;
+                    Logger.Warn($"No properties found in API response for {apiUrl}");
+                    return;
                 }
-                Logger.Info($"Scraped {i} properties from {url}");
+
+                int processedCount = 0;
+                foreach (var propertyJson in properties)
+                {
+                    try
+                    {
+                        var property = ParsePropertyFromJson(propertyJson, listingTypes, propertyTypes);
+                        if (property != null)
+                        {
+                            using (var context = new AppDbContext())
+                            {
+                                context.Properties.Add(property);
+                                context.SaveChanges();
+                            }
+                            processedCount++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error($"Error parsing property from JSON: {ex.Message}");
+                    }
+                }
+
+                Logger.Info($"Scraped {processedCount} properties from API: {apiUrl}");
             }
             catch (Exception e)
             {
-                Logger.Error($"Error scraping {url}");
+                Logger.Error($"Error scraping API: {apiUrl}");
                 if (IsRetry)
                 {
                     throw;
@@ -425,12 +242,177 @@ namespace RealEstateScraper
 
                 RetryPages.Add(new BasicListingUrl
                 {
-                    ListingUrl = url
+                    ListingUrl = apiUrl
                 });
-                Logger.Error($"Added {url} to retry list due to error");
+                Logger.Error($"Added {apiUrl} to retry list due to error");
                 Logger.Error(e.Message);
             }
         }
+
+        private static Property ParsePropertyFromJson(JToken propertyJson, ListingTypes listingTypes, PropertyTypes propertyTypes)
+        {
+            try
+            {
+                var id = propertyJson["property_id"]?.Value<int>() ?? 0;
+                var address = propertyJson["display_address"]?.Value<string>() ?? "";
+                var listingUrl = propertyJson["property_url"]?.Value<string>() ?? "";
+                var fullUrl = listingUrl.StartsWith("http") ? listingUrl : $"{urlRaw}{listingUrl}";
+
+                var postcode = "";
+                var postcodeMatches = Regex.Matches(address, @"[A-Z]{1,2}[0-9]{1,2}");
+                if (postcodeMatches.Count > 0)
+                {
+                    postcode = postcodeMatches[0].Value;
+                }
+
+                bool saleRental = listingTypes == ListingTypes.Rent;
+
+                var priceText = propertyJson["price_with_price_text"]?.Value<string>() ?? "";
+                priceText = Regex.Replace(priceText, @"\s+", " ");
+                priceText = priceText.Replace(",", "").Trim();
+
+                string priceQuantify = "";
+                int? price = null, pcm = null, pw = null, pa = null;
+
+                string currencySymbol = new string(priceText.Where(c => !char.IsLetterOrDigit(c) && !char.IsWhiteSpace(c)).ToArray());
+                string currencyCode = CurrencyHelper.CurrencySymbolToIsoCode(currencySymbol);
+
+                if (!string.IsNullOrEmpty(priceText))
+                {
+                    if (saleRental)
+                    {
+                        if (priceText.Contains("POA", StringComparison.OrdinalIgnoreCase) || priceText.Contains("Price on application", StringComparison.OrdinalIgnoreCase))
+                        {
+                            pcm = -1;
+                            priceQuantify = "POA";
+                        }
+                        if (priceText.Contains("pa", StringComparison.OrdinalIgnoreCase))
+                        {
+                            pa = propertyJson["price_value"]?.Value<int?>();
+                            priceQuantify = "Price Annum";
+                        }
+                        else if (priceText.Contains("pcm", StringComparison.OrdinalIgnoreCase))
+                        {
+                            pcm = propertyJson["price_value"]?.Value<int?>();
+                            priceQuantify = "Per Calendar Month";
+                        }
+                        else if (priceText.Contains("pw", StringComparison.OrdinalIgnoreCase))
+                        {
+                            pw = propertyJson["price_value"]?.Value<int?>();
+                            priceQuantify = "Per Week";
+                        }
+                    }
+                    else
+                    {
+                        price = propertyJson["price_value"]?.Value<int?>();
+
+                        if (priceText.Contains("Guide Price", StringComparison.OrdinalIgnoreCase))
+                        {
+                            priceQuantify = "Guide Price";
+                        }
+                        else if (priceText.Contains("Offers excess of", StringComparison.OrdinalIgnoreCase))
+                        {
+                            priceQuantify = "Offers Excess";
+                        }
+                        else if (priceText.Contains("Offers region of", StringComparison.OrdinalIgnoreCase))
+                        {
+                            priceQuantify = "Offers Region";
+                        }
+                        else if (priceText.Contains("Offers over", StringComparison.OrdinalIgnoreCase))
+                        {
+                            priceQuantify = "Offers Over";
+                        }
+                    }
+                }
+
+                var propertyType = propertyJson["property_type"]?.Value<string>() ?? "";
+                var bedrooms = propertyJson["bedrooms"]?.Value<int?>() ?? 0;
+                var bathrooms = propertyJson["bathrooms"]?.Value<int?>() ?? 0;
+                var receptions = propertyJson["reception_rooms"]?.Value<int?>() ?? 0;
+
+                var marketStatus = propertyJson["status"]?.Value<string>() ?? null;
+                var virtualTour = propertyJson["has_virtual_tour?"]?.Value<bool>() ?? false;
+                string? bannerText = propertyJson["photo_overlay"]?.Value<string>().Trim() ?? null;
+                string? banner = null;
+                string? bannerSrc = null;
+
+                if (!string.IsNullOrEmpty(bannerText))
+                {
+                    var match = Regex.Match(bannerText, "src=['\"](.*?)['\"]");
+                    if (match.Success)
+                    {
+                        bannerSrc = match.Groups[1].Value;
+                    }
+                    if (bannerSrc.Contains("let_agreed_new", StringComparison.OrdinalIgnoreCase))
+                    {
+                        banner = "Let Agreed";
+                    }
+                    else if (bannerSrc.Contains("sstc_new", StringComparison.OrdinalIgnoreCase))
+                    {
+                        banner = "Sold STC";
+                    }
+                    else if (bannerSrc.Contains("new-overlay", StringComparison.OrdinalIgnoreCase))
+                    {
+                        banner = "New";
+                    }
+                }
+                if (virtualTour)
+                {
+                    if (!string.IsNullOrEmpty(banner))
+                    {
+                        banner += " || Online Viewing";
+                    }
+                    else
+                    {
+                        banner = "Online Viewing";
+                    }
+                }
+
+                var imageUrl = "";
+                var images = propertyJson["photo"].Value<string>() ?? "";
+                if (images != null && images.Any())
+                {
+                    imageUrl = images.StartsWith("http") ? images : $"https:{images}";
+                }
+
+                bool commercialListing = propertyTypes == PropertyTypes.Commercial;
+                bool newBuild = propertyTypes == PropertyTypes.NewHomes;
+
+                var property = new Property
+                {
+                    ListingSiteRef = id,
+                    ListingUrl = fullUrl,
+                    Address = address,
+                    PostcodeDistrict = postcode,
+                    Price = price,
+                    Currency = currencyCode,
+                    SaleRental = saleRental,
+                    MarketStatus = marketStatus,
+                    BannerText = banner,
+                    PropertyType = propertyType,
+                    PriceQualify = priceQuantify,
+                    CommercialListing = commercialListing,
+                    NewBuild = newBuild,
+                    Bedrooms = bedrooms,
+                    Bathrooms = bathrooms,
+                    Reception = receptions,
+                    Image = imageUrl,
+                    Pcm = pcm,
+                    Pw = pw,
+                    Pa = pa,
+                    VirtualTour = virtualTour,
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+
+                return property;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Error parsing property JSON: {ex.Message}");
+                return null;
+            }
+        }
+
 
         public static void RetryScrape(ListingTypes listingTypes, PropertyTypes propertyTypes, int numberOfThread)
         {
@@ -454,7 +436,7 @@ namespace RealEstateScraper
                     {
                         using (var webClient = new WebClient())
                         {
-                            PerformScrape(listingTypes, propertyTypes, listingPage.ListingUrl, webClient);
+                            PerformApiScrape(listingTypes, propertyTypes, listingPage.ListingUrl, webClient);
                         }
                     
                     }
