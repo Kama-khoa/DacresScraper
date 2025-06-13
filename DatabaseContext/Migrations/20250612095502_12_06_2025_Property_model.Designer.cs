@@ -4,6 +4,7 @@ using DatabaseContext;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace RealEstateScraper.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250612095502_12_06_2025_Property_model")]
+    partial class _12_06_2025_Property_model
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -56,15 +59,13 @@ namespace RealEstateScraper.Migrations
                         .HasMaxLength(250)
                         .HasColumnType("nvarchar(250)");
 
-                    b.Property<string>("BranchEmail")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<string>("BranchExternalWebsite")
                         .HasMaxLength(250)
                         .HasColumnType("nvarchar(250)");
 
-                    b.Property<int>("BranchKey")
-                        .HasColumnType("int");
+                    b.Property<string>("BranchKey")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("BranchName")
                         .IsRequired()
@@ -200,7 +201,10 @@ namespace RealEstateScraper.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
-                    b.Property<string>("AddedDate")
+                    b.Property<string>("AreaGuide")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("BannerText")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<int?>("Bathrooms")
@@ -209,7 +213,15 @@ namespace RealEstateScraper.Migrations
                     b.Property<int?>("Bedrooms")
                         .HasColumnType("int");
 
+                    b.Property<string>("BranchLink")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("BranchName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("BranchPhone")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
@@ -239,17 +251,15 @@ namespace RealEstateScraper.Migrations
                     b.Property<double?>("Latitude")
                         .HasColumnType("float");
 
-                    b.Property<int>("ListingSiteRef")
-                        .HasColumnType("int");
+                    b.Property<string>("ListingSiteRef")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
 
                     b.Property<double?>("Longitude")
                         .HasColumnType("float");
 
                     b.Property<string>("Postcode")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("PriceQualify")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<int?>("Receptions")

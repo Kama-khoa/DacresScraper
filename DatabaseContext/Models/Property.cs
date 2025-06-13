@@ -13,19 +13,14 @@
         public int? Pw { get; set; }
         public int? Pcm { get; set; }
         public int? Pa { get; set; }
-        public string PriceQualify { get; set; }
+        public string? PriceQualify { get; set; }
         public bool SaleRental { get; set; }
         public string? MarketStatus { get; set; }
         public string? BannerText { get; set; }
 
         public string PropertyType { get; set; }
-        public bool CommercialListing { get; set; }
-        public int? Bedrooms { get; set; }
-        public int? Bathrooms { get; set; }
-        public int? Reception { get; set; }
         public bool NewBuild { get; set; }
         public string? Image { get; set; }
-        public bool VirtualTour{ get; set; }
         public DateTimeOffset CreatedAt { get; set; } = DateTime.Now;
     }
 }

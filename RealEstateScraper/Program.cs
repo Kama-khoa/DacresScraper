@@ -17,7 +17,7 @@ namespace RealEstateScraper
             XmlConfigurator.Configure(logRepository, new FileInfo("log4net.config"));
             var logger = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
-            int numThreads = 1; // Number of threads to use for scraping
+            int numThreads = 5; // Number of threads to use for scraping
 
             int RetryTimes = 1;
 
@@ -25,9 +25,9 @@ namespace RealEstateScraper
             {
                 try
                 {
-                    context.Database.ExecuteSqlRaw("TRUNCATE TABLE Properties");
+                    //context.Database.ExecuteSqlRaw("TRUNCATE TABLE Properties");
 
-                    context.Database.ExecuteSqlRaw("TRUNCATE TABLE Branch");
+                    //context.Database.ExecuteSqlRaw("TRUNCATE TABLE Branches");
                 }
                 catch (Exception ex)
                 {
@@ -36,11 +36,11 @@ namespace RealEstateScraper
             }
 
             logger.Info("Starting the scraper with " + numThreads + " threads.");
-            ScraperService.Start(numThreads, logger);
+            //ScraperService.Start(numThreads, logger);
 
             DetailsScraper.Program.Run(numThreads, logger, RetryTimes);
 
-            BranchScraping.Program.Run(numThreads, logger, RetryTimes);
+            //BranchScraping.Program.Run(numThreads, logger, RetryTimes);
         }
     }
 }

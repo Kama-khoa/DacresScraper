@@ -10,6 +10,7 @@ namespace DatabaseContext.Models
     public class Branch
     {
         public int Id { get; set; }
+        public int BranchKey { get; set; }
         public string BranchUrl { get; set; }
         [StringLength(150)]
         public string BranchName { get; set; }
@@ -20,7 +21,8 @@ namespace DatabaseContext.Models
         [StringLength(250)]
         public string? BranchExternalWebsite { get; set; }
         [StringLength(50)]
-        public string BranchPhone { get; set; }
+        public string? BranchPhone { get; set; }
+        public string? BranchEmail { get; set; }
         public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.Now; 
     }
 }

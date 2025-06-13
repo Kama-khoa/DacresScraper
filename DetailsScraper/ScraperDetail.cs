@@ -5,6 +5,8 @@ using HtmlAgilityPack;
 using log4net;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
 using Utilities;
@@ -85,190 +87,164 @@ namespace DetailsScraper
             try
             {
                 string html = string.Empty;
-                using (WebClient webClient = new WebClient())
+
+                CookieContainer cookies;
+                var handler = CookieSessionManager.GetHandlerWithCookies(out cookies);
+                using (HttpClient client = CookieSessionManager.CreateHttpClient(handler))
                 {
-                    AppConfig appConfig = new AppConfig();
-
-                    webClient.Proxy = new WebProxy(appConfig.ProxyUrl)
-                    {
-                        Credentials = new NetworkCredential(appConfig.ProxyUsername, appConfig.ProxyPassword)
-                    };
-                    webClient.Headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.92 Safari/537.36";
-
-                    html = webClient.DownloadString(listing.ListingUrl);
-                    if (html == null)
-                    {
+                    HttpResponseMessage response = client.GetAsync(listing.ListingUrl).Result;
+                    if (!response.IsSuccessStatusCode)
                         return;
+
+                    html = response.Content.ReadAsStringAsync().Result;
+                    if (string.IsNullOrWhiteSpace(html))
+                        return;
+
+                    HtmlDocument doc = new HtmlDocument();
+                    doc.LoadHtml(html);
+
+                    var jsonLinkNode = doc.DocumentNode
+                                              .SelectNodes("//link")
+                                              ?.FirstOrDefault(link =>
+                                                  link.GetAttributeValue("rel", "").Equals("alternate", StringComparison.OrdinalIgnoreCase) &&
+                                                  link.GetAttributeValue("type", "").Equals("application/json", StringComparison.OrdinalIgnoreCase));
+
+                    if (jsonLinkNode != null)
+                    {
+                        string jsonUrl = jsonLinkNode.GetAttributeValue("href", "");
+                        if (!string.IsNullOrEmpty(jsonUrl))
+                        {
+                            var jsonResponse = client.GetAsync(jsonUrl).Result;
+                            if (jsonResponse.IsSuccessStatusCode)
+                            {
+                                var jsonContent = jsonResponse.Content.ReadAsStringAsync().Result;
+
+                                JObject jsonObject = JsonConvert.DeserializeObject<JObject>(jsonContent);
+
+                                var postcode = jsonObject["address_postcode"]?.ToString()?.Trim() ?? string.Empty;
+                                var addedDate = jsonObject["date"]?.ToString()?.Trim() ?? string.Empty;
+                                var description = StripHtmlTags(jsonObject["description"]?.ToString() ?? "");
+                                var priceQualify = jsonObject["price_qualifier"]?.ToString()?.Trim() ?? string.Empty;
+                                if (string.IsNullOrEmpty(priceQualify) || priceQualify.Equals("null", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var priceText = jsonObject["price_formatted"]?.ToString()?.Trim() ?? string.Empty;
+                                    if (priceText.Contains("POA", StringComparison.OrdinalIgnoreCase) || priceText.Contains("Price on application", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        priceQualify = "POA";
+                                    }
+                                    if (priceText.Contains("pa", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        priceQualify = "Price Annum";
+                                    }
+                                    else if (priceText.Contains("pcm", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        priceQualify = "Per Calendar Month";
+                                    }
+                                    else if (priceText.Contains("pw", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        priceQualify = "Per Week";
+                                    }
+
+                                    priceQualify = "Unknown";
+                                }
+
+                                var bedrooms = jsonObject["bedrooms"]?.ToString()?.Trim();
+                                var bathrooms = jsonObject["bathrooms"]?.ToString()?.Trim();
+                                var receptions = jsonObject["reception_rooms"]?.ToString()?.Trim();
+
+                                int? bedroomsInt = int.TryParse(bedrooms, out var b) ? b : (int?)null;
+                                int? bathroomsInt = int.TryParse(bathrooms, out var bath) ? bath : (int?)null;
+                                int? receptionsInt = int.TryParse(receptions, out var r) ? r : (int?)null;
+
+                                var longitude = jsonObject["longitude"]?.ToString()?.Trim();
+                                var latitude = jsonObject["latitude"]?.ToString()?.Trim();
+
+                                double? longitudeDouble = double.TryParse(longitude, out var lon) ? lon : (double?)null;
+                                double? latitudeDouble = double.TryParse(latitude, out var lat) ? lat : (double?)null;
+
+                                var tenure = jsonObject["tenure"]?.ToString()?.Trim() ?? "Unknown";
+
+                                string? fullBrochure = null;
+                                var brochures = jsonObject["brochures"];
+                                if (brochures != null && brochures.HasValues)
+                                {
+                                    fullBrochure = brochures.First()?["url"]?.ToString();
+                                }
+                                string? floorPlan = null;
+                                var floorplans = jsonObject["floorplans"];
+                                if (floorplans != null && floorplans.HasValues)
+                                {
+                                    floorPlan = floorplans.First()?["url"]?.ToString();
+                                }
+                                string? epc = null;
+                                var epcs = jsonObject["epcs"];
+                                if (epcs != null && epcs.HasValues)
+                                {
+                                    epc = epcs.First()?["url"]?.ToString();
+                                }
+                                string? virtualTourUrl = null;
+                                var virtualTour = jsonObject["virtual_tours"];
+                                if (virtualTour != null && virtualTour.HasValues)
+                                {
+                                    virtualTourUrl = virtualTour.FirstOrDefault()?["url"]?.ToString();
+                                }
+
+                                var imageAllUrls = "";
+                                var images = jsonObject["images"];
+                                if (images != null && images.HasValues)
+                                {
+                                    var imageUrls = images.Select(img => img["url"]?.ToString()).Where(url => !string.IsNullOrEmpty(url)).ToList();
+                                    imageAllUrls = string.Join("||", imageUrls);
+                                }
+
+                                string branchName = "UNKNOWN";
+                                var office = jsonObject["office"];
+                                if (office != null)
+                                {
+                                    branchName = office["name"]?.ToString() ?? "";
+                                }
+                                var keyFeatures = "";
+                                var features = jsonObject["features"];
+                                if (features != null && features.HasValues)
+                                {
+                                    var featuresList = features.Select(f => f?.ToString()?.TrimStart('•', ' '))
+                                                               .Where(f => !string.IsNullOrEmpty(f))
+                                                               .ToList();
+                                    keyFeatures = string.Join("||", featuresList);
+                                }
+                                                                
+                                PropertyDetails propertyDetails = new PropertyDetails
+                                {
+                                    ListingSiteRef = listing.ListingSiteRef,
+                                    Postcode = postcode,
+                                    AddedDate = addedDate,
+                                    PriceQualify = priceQualify,
+                                    Bedrooms = bedroomsInt,
+                                    Bathrooms = bathroomsInt,
+                                    Receptions = receptionsInt,
+                                    Description = description,
+                                    BranchName = branchName,
+                                    FullBrochure = fullBrochure,
+                                    Longitude = longitudeDouble,
+                                    Latitude = latitudeDouble,
+                                    Tenure = tenure,
+                                    KeyFeatures = keyFeatures,
+                                    Images = imageAllUrls,
+                                    FloorPlan = floorPlan,
+                                    EPC = epc,
+                                    VirtualTour = virtualTourUrl,
+                                    RunSession = GenerateRunSession()
+                                };
+                                using (AppDbContext context = new AppDbContext())
+                                {
+                                    context.PropertyDetails.Add(propertyDetails);
+                                    context.SaveChanges();
+                                }
+                            }
+                        }
                     }
                 }
-                
-                HtmlDocument doc = new HtmlDocument();
-                doc.LoadHtml(html);
-
-                var scriptNodes = doc.DocumentNode.SelectNodes("//script")
-                                                  .FirstOrDefault(s => s.InnerText.Contains("google.maps.LatLng"));
-
-                double? latitude = null;
-                double? longitude = null;
-
-                if (scriptNodes != null)
-                {
-                    var match = Regex.Match(scriptNodes.InnerText, @"google\.maps\.LatLng\s*\(\s*([\d\.-]+)\s*,\s*([\d\.-]+)\s*\)");
-                    if (match.Success)
-                    {
-                        latitude = double.TryParse(match.Groups[1].Value, out var lat) ? lat : (double?)null;
-                        longitude = double.TryParse(match.Groups[2].Value, out var lng) ? lng : (double?)null;
-                    }
-                }
-
-                var detailsDiv = doc.DocumentNode.SelectSingleNode("//main");
-                if (detailsDiv != null)
-                {
-                    var address = listing.Address.Trim();
-                    var postcode = "";
-                    var postcodeNode = Regex.Matches(address, @"[A-Z]{1,2}[0-9]{1,2}");
-                    if (postcodeNode.Count > 0)
-                    {
-                        postcode = postcodeNode[0].Value;
-                    }
-                    var BranchNode = detailsDiv.Descendants("div")
-                                            .FirstOrDefault(div => div.GetAttributeValue("class", "").Contains("branch-details-header"));
-                    string branchName = BranchNode.Descendants("span")
-                                                   .FirstOrDefault(span => span.GetAttributeValue("class", "").Contains("branch-name"))
-                                                   ?.InnerText.Trim();
-                    string branchPhone = BranchNode.Descendants("a")
-                                                   .FirstOrDefault(a => a.GetAttributeValue("class", "").Contains("phone"))
-                                                   ?.InnerText.Trim();
-                    string branchLink = BranchNode.Descendants("a")
-                                                   .FirstOrDefault(a => a.GetAttributeValue("class", "").Contains("btn sweep no-top"))
-                                                   ?.GetAttributeValue("href", "");
-                    string branchFullLink = $"{urlRaw}{branchLink}";
-                    var fullBrochure = BranchNode.Descendants("a")
-                                                 .FirstOrDefault(a => a.InnerText.Trim().Equals("Full brochure", StringComparison.OrdinalIgnoreCase))
-                                                 ?.GetAttributeValue("href", "");
-                    var descriptionNode = detailsDiv.Descendants("div")
-                                            .FirstOrDefault(div => div.GetAttributeValue("class", "").Contains("property-description"));
-                    string description = string.Join("\n", descriptionNode?.Descendants("p").Select(p => p.InnerText.Trim()));
-                    var bedrooms = detailsDiv.Descendants("li")
-                                             .FirstOrDefault(li => li.GetAttributeValue("class", "").Contains("beds"))
-                                             ?.InnerText.Trim();
-                    var bathrooms = detailsDiv.Descendants("li")
-                                              .FirstOrDefault(li => li.GetAttributeValue("class", "").Contains("baths"))
-                                              ?.InnerText.Trim();
-                    var receptions = detailsDiv.Descendants("li")
-                                               .FirstOrDefault(li => li.GetAttributeValue("class", "").Contains("reception"))
-                                               ?.InnerText.Trim();
-                    int? bedroomsInt = int.TryParse(bedrooms, out var b) ? b : (int?)null;
-                    int? bathroomsInt = int.TryParse(bathrooms, out var bath) ? bath : (int?)null;
-                    int? receptionsInt = int.TryParse(receptions, out var r) ? r : (int?)null;
-                    var detailsTab = detailsDiv.Descendants("div")
-                                               .FirstOrDefault(div => div.GetAttributeValue("id", "").Contains("tab-description"));
-                    var keyFeatures = string.Join(" || ", detailsTab.Descendants("li").Select(li => li.InnerText.Trim()));
-                    var tenure = "Unknown";
-                    var tenureParagraph = detailsTab.Descendants("p")
-                                       .FirstOrDefault(p => p.InnerHtml.Contains("Freehold", StringComparison.OrdinalIgnoreCase)
-                                                         || p.InnerHtml.Contains("Leasehold", StringComparison.OrdinalIgnoreCase)
-                                                         || p.InnerHtml.Contains("Commonhold", StringComparison.OrdinalIgnoreCase));
-                    if (tenureParagraph != null && !tenureParagraph.InnerHtml.Equals("null"))
-                    {
-                        if (tenureParagraph.InnerHtml.Contains("Freehold", StringComparison.OrdinalIgnoreCase))
-                        {
-                            tenure = "Freehold";
-                        }
-                        else if (tenureParagraph.InnerHtml.Contains("Leasehold", StringComparison.OrdinalIgnoreCase))
-                        {
-                            tenure = "Leasehold";
-                        }
-                        else if (tenureParagraph.InnerHtml.Contains("Commonhold", StringComparison.OrdinalIgnoreCase))
-                        {
-                            tenure = "Commonhold";
-                        }
-                    }
-
-                    var imagesTab = detailsDiv.Descendants("div")
-                                                .FirstOrDefault(div => div.GetAttributeValue("id", "").Contains("tab-gallery"));
-                    var images = "";
-                    if (imagesTab != null && !imagesTab.InnerHtml.Equals("null", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var imgSrcs = imagesTab.Descendants("img")
-                              .Select(img => img.GetAttributeValue("src", ""))
-                              .Select(src => src.StartsWith("http") ? src : "https:" + src);
-
-                        images = string.Join(" || ", imgSrcs);
-                    }
-
-                    var floorPlanTab = detailsDiv.Descendants("div")
-                                                .FirstOrDefault(div => div.GetAttributeValue("id", "").Contains("tab-floorplans"));
-                    var floorPlan = "";
-                    if (floorPlanTab != null && !floorPlanTab.InnerHtml.Equals("null", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var imgSrcs = floorPlanTab.Descendants("img")
-                              .Select(img => img.GetAttributeValue("src", ""))
-                              .Select(src => src.StartsWith("http") ? src : "https:" + src);
-
-                        floorPlan = string.Join(" || ", imgSrcs);
-                    }
-
-                    var epcTab = detailsDiv.Descendants("div")
-                                                .FirstOrDefault(div => div.GetAttributeValue("id", "").Contains("tab-epcs"));
-                    var epc = "";
-                    if (epcTab != null && !epcTab.InnerHtml.Equals("null", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var imgSrcs = epcTab.Descendants("img")
-                              .Select(img => img.GetAttributeValue("src", "").Trim())
-                              .Select(src => src.StartsWith("http") ? src : "https:" + src);
-
-                        epc = string.Join(" || ", imgSrcs);
-                    }
-
-                    var areaGuideTab = detailsDiv.Descendants("div")
-                                                .FirstOrDefault(div => div.GetAttributeValue("id", "").Contains("tab-area-guide"));
-                    var areaGuide = "";
-                    if (areaGuideTab != null && !areaGuideTab.InnerHtml.Equals("null"))
-                    {
-                        areaGuide = string.Join("\n", areaGuideTab?.Descendants("p").Select(p => p.InnerText.Trim()));
-                    }
-
-                    var virtualTour = "";
-                    var virtualTourTab = detailsDiv.Descendants("div")
-                                            .FirstOrDefault(div => div.GetAttributeValue("id", "").Contains("tab-virtual-tour"));
-                    if (virtualTourTab != null && !virtualTourTab.InnerHtml.Equals("null"))
-                    {
-                        virtualTour = virtualTourTab.Descendants("iframe")
-                                                    .FirstOrDefault(iframe => iframe.GetAttributeValue("src", "").Contains("youtube.com"))
-                                                    ?.GetAttributeValue("src", "");
-                    }
-
-                    PropertyDetails propertyDetails = new PropertyDetails
-                    {
-                        Postcode = postcode,
-                        ListingSiteRef = listing.ListingUrl,
-                        Bedrooms = bedroomsInt,
-                        Bathrooms = bathroomsInt,
-                        Receptions = receptionsInt,
-                        Description = description,
-                        BranchName = branchName,
-                        BranchPhone = branchPhone,
-                        BranchLink = branchFullLink,
-                        FullBrochure = fullBrochure,
-                        Longitude = longitude,
-                        Latitude = latitude,
-                        Tenure = tenure,
-                        KeyFeatures = keyFeatures,
-                        Images = images,
-                        FloorPlan = floorPlan,
-                        EPC = epc,
-                        AreaGuide = areaGuide,
-                        VirtualTour = virtualTour,
-                        CreatedAt = DateTime.Now
-                    };
-                    using (AppDbContext context = new AppDbContext())
-                    {
-                        context.PropertyDetails.Add(propertyDetails);
-                        context.SaveChanges();
-                    }
-                        
-                }
+                Logger.Info($"Finished scrape details for {listing.ListingSiteRef}");
             }
             catch (Exception ex)
             {
@@ -285,9 +261,28 @@ namespace DetailsScraper
                     };
                     context.FailedItems.Add(failedItem);
                     context.SaveChanges();
-                    Logger.Info($"Error scraping details for {listing.ListingUrl}: {ex.Message}");
                 }
+
+                Logger.Info($"Error scraping details for {listing.ListingUrl}: {ex.Message}");
             }
+        }
+        private static string StripHtmlTags(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return string.Empty;
+
+            // Simple HTML tag removal - you might want to use a more robust method
+            return System.Text.RegularExpressions.Regex.Replace(input, "<.*?>", string.Empty)
+                                                        .Replace("&pound;", "£")
+                                                        .Replace("&amp;", "&")
+                                                        .Replace("&#8211;", "–")
+                                                        .Trim();
+        }
+        private static string GenerateRunSession()
+        {
+            var now = DateTime.Now;
+            string timeOfDay = now.Hour < 12 ? "Morning" : "Afternoon";
+            return timeOfDay;
         }
     }
 }

@@ -40,8 +40,6 @@ namespace DatabaseContext
     {
         public int ListingSiteRef { get; set; }
         public string ListingUrl { get; set; }
-        public string Address { get; set; }
-        public bool CommercialListing { get; set; }
     }
     public class UpdateListingUrl
     {
