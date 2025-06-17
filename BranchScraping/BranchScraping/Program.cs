@@ -9,26 +9,29 @@ namespace BranchScraping
 {
     public class Program
     {
-        public static void Run(int numberOfThread, ILog logger, int retryTimes)
+        private static string url = "https://dacres.co.uk/contact-us/";
+        public static void Run(ILog logger, int retryTimes)
         {
             logger.Info($"Start Branch Scrape");
 
             ScrapeBranch.Logger = logger;
             using (AppDbContext context = new AppDbContext())
             {
-                var newBranches = context.NewBranchUrls.ToList();
-                ScrapeBranch.Branches = newBranches;
+                var newListings = context.NewBranchUrls.ToList();
+                ScrapeBranch.Branches = newListings;
                 ScrapeBranch.RetryBranches = new List<NewBranchUrl>();
             }
 
-            Task[] backgroundTasks = new Task[numberOfThread];
-            for (int i = 0; i < numberOfThread; i++)
-            {
-                backgroundTasks[i] = Task.Run(() => ScrapeBranch.StartScrape());
+            //Task[] backgroundTasks = new Task[numberOfThread];
+            //for (int i = 0; i < numberOfThread; i++)
+            //{
+            //    backgroundTasks[i] = Task.Run(() => ScrapeBranch.StartScrape());
 
-            }
+            //}
 
-            Task.WaitAll(backgroundTasks);
+            //Task.WaitAll(backgroundTasks);
+
+            ScrapeBranch.StartScrape();
 
             for (int time = 0; time < retryTimes; time++)
             {
@@ -42,13 +45,7 @@ namespace BranchScraping
                     ScrapeBranch.IsRetry = true;
                 }
 
-                backgroundTasks = new Task[numberOfThread];
-                for (int i = 0; i < numberOfThread; i++)
-                {
-                    backgroundTasks[i] = Task.Run(() => ScrapeBranch.StartScrape());
-                }
-                //wait for all threads to complete
-                Task.WaitAll(backgroundTasks);
+                ScrapeBranch.StartScrape();
             }
 
             logger.Info("End Branch Scrape");

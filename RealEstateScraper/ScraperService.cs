@@ -318,7 +318,7 @@ namespace RealEstateScraper
                     propertyType = propertyType.Substring(0, propertyType.Length - marketStatus.Length).Trim();
                 }
 
-                propertyType = propertyType.Replace(",", "||").Trim();
+                propertyType = propertyType.Replace(",", " ||").Trim();
 
                 var imgNode = div.SelectSingleNode(".//div[contains(@class, 'grid-img')]//img");
                 image = imgNode?.GetAttributeValue("src", "")?.Trim();

@@ -4,7 +4,9 @@ using DatabaseContext.Models;
 using HtmlAgilityPack;
 using log4net;
 using Newtonsoft.Json;
+using System.Collections.Generic;
 using System.Net;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Utilities;
 
@@ -21,31 +23,106 @@ namespace BranchScraping
         {
             try
             {
-                while (true)
+                PerformScrape(Branches);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("An error occurred during scraping: " + ex.Message);
+            }
+        }
+        private static void PerformScrape(List<NewBranchUrl> Branches)
+        {
+            Logger.Info("Scraping details for branches");
+            CookieContainer cookies;
+            var handler = CookieSessionManager.GetHandlerWithCookies(out cookies);
+            using (HttpClient client = CookieSessionManager.CreateHttpClient(handler))
+            {
+                var url = "https://dacres.co.uk/contact-us/";
+                var html = client.GetStringAsync(url).Result;
+                var htmlDoc = new HtmlDocument();
+                htmlDoc.LoadHtml(html);
+                var nodes = htmlDoc.DocumentNode.SelectNodes("//div[@class='contact-five list-item']");
+                if (nodes == null)
                 {
-                    NewBranchUrl branch;
-                    lock (Branches)
-                    {
-                        branch = Branches.FirstOrDefault();
-
-                        //if there's no listing requires update - exit
-                        if (branch == null)
-                        {
-                            break;
-                        }
-                        Branches.Remove(branch);
-
-                    }
-
+                    Logger.Error($"No branch info in Url: {url}");
+                    return;
+                }
+                foreach (var branch in Branches)
+                {
                     try
                     {
-                        //scrape the data 
-                        PerformScrape(branch);
+                        foreach (var item in nodes)
+                        {
+                            var nameNode = item.SelectSingleNode(".//h3");
+                            var currentBranchName = WebUtility.HtmlDecode(nameNode?.InnerText).Trim() ?? "";
+
+                            string matchedBranchName = null;
+                            bool isTargetBranch = false;
+
+                            if (!string.IsNullOrEmpty(currentBranchName))
+                            {
+                                var currentWords = currentBranchName.ToLower().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                                var targetWords = branch.BranchName.ToLower().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+                                int matchCount = currentWords.Count(word => targetWords.Contains(word));
+
+                                if (matchCount >= 2)
+                                {
+                                    isTargetBranch = true;
+                                    matchedBranchName = branch.BranchName;
+                                }
+                            }
+
+                            if (!isTargetBranch)
+                                continue;
+
+                            var addressNodes = item.SelectNodes(".//p[not(@class)]");
+                            string branchAddress = "N/A", branchPostcode = "N/A";
+                            if (addressNodes != null && addressNodes.Count >= 2)
+                            {
+                                branchAddress = string.Join(", ", addressNodes.Take(addressNodes.Count - 1)
+                                    .Select(p => p.InnerText.Trim()).Where(p => !string.IsNullOrEmpty(p)));
+                                branchPostcode = addressNodes.Last().InnerText.Trim();
+                            }
+
+                            var phoneNode = item.SelectSingleNode(".//a[starts-with(@href, 'tel:')]");
+                            var phoneSpan = item.SelectSingleNode(".//span[contains(@class, 'telephone')]");
+                            string branchPhone = phoneNode?.GetAttributeValue("href", "")?.Replace("tel:", "").Trim() ??
+                                                 phoneSpan?.InnerText.Trim() ?? "N/A";
+
+                            string branchEmail = "N/A";
+                            var emailNodes = item.SelectNodes(".//a[starts-with(@href, 'mailto:')]");
+                            if (matchedBranchName.ToLower().Contains("lettings"))
+                            {
+                                var lettingEmail = emailNodes?.FirstOrDefault(a => a.GetAttributeValue("href", "").ToLower().Contains("letting"));
+                                branchEmail = lettingEmail?.GetAttributeValue("href", "").Replace("mailto:", "").Trim() ??
+                                              emailNodes?.FirstOrDefault()?.GetAttributeValue("href", "").Replace("mailto:", "").Trim() ?? "N/A";
+                            }
+                            else
+                            {
+                                branchEmail = emailNodes?.FirstOrDefault()?.GetAttributeValue("href", "").Replace("mailto:", "").Trim() ?? "N/A";
+                            }
+
+                            var newBranch = new Branch
+                            {
+                                BranchUrl = branch.BranchUrl,
+                                BranchName = branch.BranchName,
+                                BranchAddress = branchAddress,
+                                BranchPostcode = branchPostcode,
+                                BranchPhone = branchPhone
+                            };
+                            using (AppDbContext context = new AppDbContext())
+                            {
+                                context.Branches.Add(newBranch);
+                                context.SaveChanges();
+                                Logger.Info($"Successfully saved branch {branch.BranchName} from {branch.BranchUrl}");
+                            }
+                        }
+
                     }
-                    catch (Exception e)
+                    catch (Exception ex)
                     {
-                        // If it's the last retry scrape, log the failed branch to db
-                        if (IsRetry)
+                        if(IsRetry)
                         {
                             using (AppDbContext context = new AppDbContext())
                             {
@@ -53,212 +130,19 @@ namespace BranchScraping
                                 {
                                     CreatedDate = DateTime.UtcNow,
                                     IsItemDeleted = false,
-                                    ItemType = 2,
+                                    ItemType = 1,
                                     Url = branch.BranchUrl,
-                                    ErrorMessage = e.Message
+                                    ErrorMessage = ex.Message
                                 };
                                 context.FailedItems.Add(failedItem);
                                 context.SaveChanges();
+                                Logger.Error($"Error scraping branch {branch.BranchName}: {ex.Message}");
                             }
-                        }
-                        //otherwise add the branch to retry list to scrape again
-                        else
-                        {
-                            RetryBranches.Add(branch);
-                        }
-
-                        Logger.Error(("Scrape branch {0} error due to: {1}", branch.BranchName, e.Message));
-                    }
-
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("An error occurred during scraping: " + ex.Message);
-            }
-        }
-
-        public static string CrawlPhoneFromBranchPage(string branchUrl)
-        {
-            try
-            {
-                string page = string.Empty;
-                using (WebClient webClient = new WebClient())
-                {
-                    //AppConfig appConfig = new AppConfig();
-
-                    //webClient.Proxy = new WebProxy(appConfig.ProxyUrl)
-                    //{
-                    //    Credentials = new NetworkCredential(appConfig.ProxyUsername, appConfig.ProxyPassword)
-                    //};
-                    webClient.Headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.92 Safari/537.36";
-
-                    page = webClient.DownloadString(branchUrl);
-                    if (page == null)
-                    {
-                        return null;
+                        }    
+                        RetryBranches.Add(branch);
                     }
                 }
-                HtmlDocument htmlDocument = new HtmlDocument();
-                htmlDocument.LoadHtml(page);
-
-                var html = htmlDocument.DocumentNode.Descendants("body").First();
-                if (html != null)
-                {
-                    var branchPhone = html.Descendants("a")
-                                                .FirstOrDefault(a => a.GetAttributeValue("class", "").Contains("phone"))
-                                                ?.InnerText.Trim();
-                    return branchPhone;
-                }
-                return null;
             }
-            catch (Exception ex)
-            {
-                Logger.Error($"Error crawling phone from {branchUrl}: {ex.Message}");
-                return null;
-            }
-        }
-
-        public static void PerformScrape(NewBranchUrl branch)
-        {
-            Logger.Info($"Scraping details for {branch.BranchUrl}");
-            try
-            {
-                string page = string.Empty;
-                using (WebClient webClient = new WebClient())
-                {
-                    //AppConfig appConfig = new AppConfig();
-
-                    //webClient.Proxy = new WebProxy(appConfig.ProxyUrl)
-                    //{
-                    //    Credentials = new NetworkCredential(appConfig.ProxyUsername, appConfig.ProxyPassword)
-                    //};
-                    webClient.Headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.92 Safari/537.36";
-
-                    page = webClient.DownloadString(branch.BranchUrl);
-                    if (page == null)
-                    {
-                        return;
-                    }
-                }
-                var branchesData = ExtractBranchesFromScript(page);
-
-                if (branchesData != null && branchesData.Any())
-                {
-                    using (AppDbContext context = new AppDbContext())
-                    {
-                        foreach (var branchDto in branchesData)
-                        {
-                            string branchPhone = null;
-                            if (!string.IsNullOrEmpty(branchDto.BranchUrl))
-                            {
-                                var fullBranchUrl = branchDto.BranchUrl.StartsWith("http") ?
-                                                   branchDto.BranchUrl :
-                                                   $"https://dacres.co.uk{branchDto.BranchUrl}";
-                                branchPhone = CrawlPhoneFromBranchPage(fullBranchUrl);
-                            }
-                            // Extract postcode from address
-                            var branchPostcode = ExtractPostcode(branchDto.Address);
-
-                            var newBranch = new Branch
-                            {
-                                BranchUrl = !string.IsNullOrEmpty(branchDto.BranchUrl) ?
-                                           (branchDto.BranchUrl.StartsWith("http") ? branchDto.BranchUrl : $"https://example.com{branchDto.BranchUrl}") :
-                                           branch.BranchUrl,
-                                BranchName = branchDto.Name,
-                                BranchAddress = branchDto.Address?.Replace("\n", ", "),
-                                BranchPostcode = branchPostcode,
-                                BranchPhone = branchPhone,
-                            };
-                            context.Branches.Add(newBranch);
-                        }
-                        context.SaveChanges();
-                        Logger.Info($"Successfully saved {branchesData.Count} branches from {branch.BranchUrl}");
-                    }
-                }
-                else
-                {
-                    Logger.Warn($"No branch data found in JavaScript for {branch.BranchUrl}");
-                }
-            }
-            catch (Exception ex)
-            {
-                using (AppDbContext context = new AppDbContext())
-                {
-                    FailedItem failedItem = new FailedItem()
-                    {
-                        CreatedDate = DateTime.UtcNow,
-                        IsItemDeleted = false,
-                        ItemType = 1,
-                        Url = branch.BranchUrl,
-                        ErrorMessage = ex.Message
-                    };
-                    context.FailedItems.Add(failedItem);
-                    context.SaveChanges();
-                    Logger.Error($"Error scraping branch {branch.BranchName}: {ex.Message}");
-                }
-            }
-        }
-
-        private static List<BranchDto> ExtractBranchesFromScript(string pageContent)
-        {
-            try
-            {
-                // Find the JavaScript code containing the branches data
-                var scriptPattern = @"Ctesius\.addConfig\('branches',\s*({.*?})\);";
-                var match = Regex.Match(pageContent, scriptPattern, RegexOptions.Singleline | RegexOptions.IgnoreCase);
-
-                if (match.Success)
-                {
-                    var jsonString = match.Groups[1].Value;
-                    
-                    // Clean up the JSON string
-                    jsonString = jsonString.Replace("\\u0026", "&");
-                    
-                    var branchResponse = JsonConvert.DeserializeObject<BranchResponse>(jsonString);
-                    return branchResponse?.Branches ?? new List<BranchDto>();
-                }
-
-                // Alternative method: Look for the JSON data in script tags
-                var htmlDocument = new HtmlDocument();
-                htmlDocument.LoadHtml(pageContent);
-
-                var scriptNodes = htmlDocument.DocumentNode.Descendants("script")
-                    .Where(node => node.InnerText.Contains("branches") && node.InnerText.Contains("lat") && node.InnerText.Contains("lng"));
-
-                foreach (var scriptNode in scriptNodes)
-                {
-                    var scriptContent = scriptNode.InnerText;
-                    var branchMatch = Regex.Match(scriptContent, @"""branches"":\s*\[(.*?)\]", RegexOptions.Singleline);
-                    
-                    if (branchMatch.Success)
-                    {
-                        var branchesArrayJson = $"[{branchMatch.Groups[1].Value}]";
-                        branchesArrayJson = branchesArrayJson.Replace("\\u0026", "&");
-                        
-                        var branches = JsonConvert.DeserializeObject<List<BranchDto>>(branchesArrayJson);
-                        return branches ?? new List<BranchDto>();
-                    }
-                }
-
-                return new List<BranchDto>();
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"Error extracting branches from script: {ex.Message}");
-                return new List<BranchDto>();
-            }
-        }
-
-        private static string ExtractPostcode(string address)
-        {
-            if (string.IsNullOrEmpty(address))
-                return null;
-
-            // UK postcode regex pattern
-            var regex = new Regex(@"[A-Z]{1,2}[0-9R][0-9A-Z]?\s?[0-9][A-Z]{2}", RegexOptions.IgnoreCase);
-            var match = regex.Match(address);
-            return match.Success ? match.Value.ToUpper() : null;
         }
 
         public static void RetryScrape()

@@ -18,6 +18,7 @@ namespace DatabaseContext.Models
         public int? Receptions { get; set; }
 
         public string BranchName { get; set; }
+        public string BranchUrl { get; set; }
         public string? FullBrochure { get; set; }
 
         public double? Longitude { get; set; }

@@ -27,7 +27,7 @@ namespace RealEstateScraper
                 {
                     //context.Database.ExecuteSqlRaw("TRUNCATE TABLE Properties");
 
-                    //context.Database.ExecuteSqlRaw("TRUNCATE TABLE Branches");
+                    context.Database.ExecuteSqlRaw("TRUNCATE TABLE Branches");
                 }
                 catch (Exception ex)
                 {
@@ -40,7 +40,9 @@ namespace RealEstateScraper
 
             DetailsScraper.Program.Run(numThreads, logger, RetryTimes);
 
-            //BranchScraping.Program.Run(numThreads, logger, RetryTimes);
+            BranchScraping.Program.Run(logger, RetryTimes);
+
+            //DetailsScraper.UpdateDetails.Run(numThreads, logger, RetryTimes);
         }
     }
 }
