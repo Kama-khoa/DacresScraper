@@ -7,12 +7,19 @@ namespace Utilities
 {
 	public static class CookieSessionManager
 	{
-		public static HttpClientHandler GetHandlerWithCookies(out CookieContainer cookies)
+		private static AppConfig appConfig = new AppConfig();
+
+        public static HttpClientHandler GetHandlerWithCookies(out CookieContainer cookies)
 		{
 			cookies = new CookieContainer();
 			var handler = new HttpClientHandler
 			{
-				CookieContainer = cookies,
+				
+                Proxy = new WebProxy(appConfig.ProxyHost, appConfig.ProxyPort)
+				{
+					Credentials = new NetworkCredential(appConfig.ProxyUsername, appConfig.ProxyPassword)
+				},
+                CookieContainer = cookies,
 				AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
 				UseCookies = true,
 				AllowAutoRedirect = true

@@ -31,7 +31,6 @@ namespace DetailsScraper
                 ScraperDetail.Listings = ScraperDetail.RetryListings;
                 ScraperDetail.RetryListings = new List<BasicListingUrl>();
 
-                //if it's the last time we retry, then we mark the isRetry flag to be false
                 if (time == retryTimes - 1)
                 {
                     ScraperDetail.IsRetry = true;
@@ -42,7 +41,7 @@ namespace DetailsScraper
                 {
                     backgroundTasks[i] = Task.Run(() => ScraperDetail.StartScrape());
                 }
-                //wait for all threads to complete
+
                 Task.WaitAll(backgroundTasks);
             }
 
